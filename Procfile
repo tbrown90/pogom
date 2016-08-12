@@ -1,1 +1,1 @@
-web: gunicorn pogom/app:app --log-file -
+web: gunicorn pogom.app:app --log-file -
