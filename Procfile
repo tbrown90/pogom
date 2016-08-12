@@ -1,1 +1,1 @@
-web: python runserver.py -P 5000
+web: gunicorn runserver:app --log-file -
