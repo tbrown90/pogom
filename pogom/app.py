@@ -1,21 +1,21 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import logging
 import calendar
-from flask import Flask, jsonify, render_template, request, abort, redirect, url_for, make_response
-from flask.json import JSONEncoder
-from datetime import datetime
-import time
 import json
-import threading
+import logging
+import os
 import random
 import string
-import os
+import time
+from datetime import datetime
+
+from flask import Flask, jsonify, render_template, request, abort, redirect, url_for, make_response
+from flask.json import JSONEncoder
 
 from . import config
 from .models import Pokemon, Gym, Pokestop
-from .scan import ScanMetrics, Scanner
+from .scan import ScanMetrics
 
 log = logging.getLogger(__name__)
 

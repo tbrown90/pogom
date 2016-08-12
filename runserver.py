@@ -1,13 +1,12 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import logging
-import sys
 import json
+import logging
+import os
 import random
 import string
-import os
-from threading import Thread
+import sys
 
 from pogom import config
 from pogom.app import Pogom
