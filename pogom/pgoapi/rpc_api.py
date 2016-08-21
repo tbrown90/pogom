@@ -47,10 +47,10 @@ from .exceptions import NotLoggedInException, ServerBusyOrOfflineException, Serv
 from .utilities import to_camel_case, get_time, get_format_time_diff, Rand48, long_to_bytes, generateLocation1, generateLocation2, generateRequestHash, f2i
 
 from .protos import POGOProtos
-from POGOProtos.Networking.Envelopes_pb2 import RequestEnvelope
-from POGOProtos.Networking.Envelopes_pb2 import ResponseEnvelope
-from POGOProtos.Networking.Requests_pb2 import RequestType
-import Signature_pb2
+from POGOProtos.Networking.Envelopes.RequestEnvelope_pb2 import RequestEnvelope
+from POGOProtos.Networking.Envelopes.ResponseEnvelope_pb2 import ResponseEnvelope
+from POGOProtos.Networking.Requests.RequestType_pb2 import RequestType
+from POGOProtos.Networking.Envelopes.Signature_pb2 import Signature
 
 
 class RpcApi:
@@ -136,6 +136,7 @@ class RpcApi:
         if isinstance(response_dict, dict):
             status_code = response_dict.get('status_code', None)
             if status_code == 102:
+                self._auth_provider._access_token_expiry = time.time()
                 raise AuthTokenExpiredException()
             elif status_code == 52:
                 raise ServerSideRequestThrottlingException("Request throttled by server... slow down man")
@@ -188,33 +189,36 @@ class RpcApi:
         if ticket:
             self.log.debug('Found Session Ticket - using this instead of oauth token')
             request.auth_ticket.expire_timestamp_ms, request.auth_ticket.start, request.auth_ticket.end = ticket
+            ticket_serialized = request.auth_ticket.SerializeToString()
 
-            if self._signature_gen:
-                ticket_serialized = request.auth_ticket.SerializeToString()
-
-                sig = Signature_pb2.Signature()
-
-                sig.location_hash1 = generateLocation1(ticket_serialized, request.latitude, request.longitude, request.altitude)
-                sig.location_hash2 = generateLocation2(request.latitude, request.longitude, request.altitude)
-
-                for req in request.requests:
-                    hash = generateRequestHash(ticket_serialized, req.SerializeToString())
-                    sig.request_hash.append(hash)
-
-                sig.unk22 = os.urandom(32)
-                sig.timestamp = get_time(ms=True)
-                sig.timestamp_since_start = get_time(ms=True) - RpcApi.START_TIME
-
-                signature_proto = sig.SerializeToString()
-
-                u6 = request.unknown6.add()
-                u6.request_type = 6
-                u6.unknown2.unknown1 = self._generate_signature(signature_proto)
         else:
             self.log.debug('No Session Ticket found - using OAUTH Access Token')
             request.auth_info.provider = self._auth_provider.get_name()
             request.auth_info.token.contents = self._auth_provider.get_access_token()
             request.auth_info.token.unknown2 = 59
+            ticket_serialized = request.auth_info.SerializeToString() #Sig uses this when no auth_ticket available
+
+        if self._signature_gen:
+            sig = Signature()
+
+            sig.location_hash1 = generateLocation1(ticket_serialized, request.latitude, request.longitude, request.altitude)
+            sig.location_hash2 = generateLocation2(request.latitude, request.longitude, request.altitude)
+
+            for req in request.requests:
+                hash = generateRequestHash(ticket_serialized, req.SerializeToString())
+                sig.request_hash.append(hash)
+
+            sig.session_hash = os.urandom(32)
+            sig.timestamp = get_time(ms=True)
+            sig.timestamp_since_start = get_time(ms=True) - RpcApi.START_TIME
+
+            signature_proto = sig.SerializeToString()
+
+            #u6 = request.unknown6.add()
+            
+            u6 = request.unknown6
+            u6.request_type = 6
+            u6.unknown2.encrypted_signature = self._generate_signature(signature_proto)
 
         # unknown stuff
         request.unknown12 = 989
@@ -280,7 +284,7 @@ class RpcApi:
                 entry_name = RequestType.Name(entry_id)
 
                 proto_name = to_camel_case(entry_name.lower()) + 'Message'
-                proto_classname = 'POGOProtos.Networking.Requests.Messages_pb2.' + proto_name
+                proto_classname = 'POGOProtos.Networking.Requests.Messages.' + proto_name + '_pb2.' + proto_name
                 subrequest_extension = self.get_class(proto_classname)()
 
                 self.log.debug("Subrequest class: %s", proto_classname)
@@ -364,6 +368,11 @@ class RpcApi:
         self.log.debug('Parsing sub RPC responses...')
         response_proto_dict['responses'] = {}
 
+        if response_proto_dict.get('status_code', 1) == 53:
+            exception = ServerApiEndpointRedirectException()
+            exception.set_redirected_endpoint(response_proto_dict['api_url'])
+            raise exception
+
         if 'returns' in response_proto_dict:
             del response_proto_dict['returns']
 
@@ -381,7 +390,7 @@ class RpcApi:
 
             entry_name = RequestType.Name(entry_id)
             proto_name = to_camel_case(entry_name.lower()) + 'Response'
-            proto_classname = 'POGOProtos.Networking.Responses_pb2.' + proto_name
+            proto_classname = 'POGOProtos.Networking.Responses.' + proto_name + '_pb2.' + proto_name
 
             self.log.debug("Parsing class: %s", proto_classname)
 

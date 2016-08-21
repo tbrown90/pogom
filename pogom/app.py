@@ -15,7 +15,9 @@ from flask.json import JSONEncoder
 
 from . import config
 from .models import Pokemon, Gym, Pokestop
-from .scan import ScanMetrics
+
+from .scan import ScanMetrics, Scanner
+from .utils import get_locale
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +31,7 @@ class Pogom(Flask):
         self.json_encoder = CustomJSONEncoder
 
         self.route('/', methods=['GET'])(self.fullmap)
+        self.route('/heatmap-data', methods=['GET'])(self.heatmap_data)
         self.route('/map-data', methods=['GET'])(self.map_data)
         self.route('/cover', methods=['GET'])(self.cover)
         self.route('/location', methods=['POST'])(self.add_location)
@@ -37,13 +40,14 @@ class Pogom(Flask):
         self.route('/config', methods=['GET'])(self.get_config_site)
         self.route('/config', methods=['POST'])(self.post_config_site)
         self.route('/login', methods=['GET', 'POST'])(self.login)
+        self.route('/locale', methods=['GET'])(self.locale)
 
     def is_authenticated(self):
         if config.get('CONFIG_PASSWORD', None) and not request.cookies.get("auth") == config['AUTH_KEY']:
             return False
         else:
             return True
-    
+
     def fullmap(self):
         # if 'search_thread' not in [t.name for t in threading.enumerate()]:
         if (not config.get('GOOGLEMAPS_KEY', None) or
@@ -58,14 +62,16 @@ class Pogom(Flask):
     def login(self):
         if self.is_authenticated():
             return redirect(url_for('get_config_site'))
-        
+
         if request.method == "GET":
             return render_template('login.html')
-
         if request.form.get('password', None) == config.get('CONFIG_PASSWORD', None):
             resp = make_response(redirect(url_for('get_config_site')))
             resp.set_cookie('auth', config['AUTH_KEY'])
             return resp
+
+    def heatmap_data(self):
+        return jsonify( Pokemon.get_heat_stats() )
 
     def get_config_site(self):
         if not self.is_authenticated():
@@ -73,6 +79,8 @@ class Pogom(Flask):
 
         return render_template(
             'config.html',
+            locale=config.get('LOCALE', ''),
+            locales_available=config.get('LOCALES_AVAILABLE', []),
             gmaps_key=config.get('GOOGLEMAPS_KEY', None),
             accounts=config.get('ACCOUNTS', []),
             password=config.get('CONFIG_PASSWORD', None))
@@ -81,6 +89,7 @@ class Pogom(Flask):
         if not self.is_authenticated():
             return redirect(url_for('login'))
 
+        config['LOCALE'] = request.form.get('locale', 'en')
         config['GOOGLEMAPS_KEY'] = request.form.get('gmapsKey', '')
 
         pw = request.form.get('configPassword', None)
@@ -112,6 +121,8 @@ class Pogom(Flask):
 
         resp = make_response(render_template(
             'config.html',
+            locale=config.get('LOCALE', ''),
+            locales_available=config.get('LOCALES_AVAILABLE', []),
             gmaps_key=config.get('GOOGLEMAPS_KEY', None),
             accounts=config.get('ACCOUNTS', []),
             password=config.get('CONFIG_PASSWORD', None),
@@ -133,6 +144,7 @@ class Pogom(Flask):
 
         with open(config_path, 'w') as f:
             data = {'GOOGLEMAPS_KEY': config['GOOGLEMAPS_KEY'],
+                    'LOCALE': config['LOCALE'],
                     'CONFIG_PASSWORD': config['CONFIG_PASSWORD'],
                     'SCAN_LOCATIONS': self.scan_config.SCAN_LOCATIONS.values(),
                     'ACCOUNTS': config['ACCOUNTS']}
@@ -151,7 +163,8 @@ class Pogom(Flask):
         d['server_status'] = {'num-threads': ScanMetrics.NUM_THREADS,
                               'num-accounts': ScanMetrics.NUM_ACCOUNTS,
                               'last-successful-request': time_since_last_req,
-                              'complete-scan-time': ScanMetrics.COMPLETE_SCAN_TIME}
+                              'complete-scan-time': ScanMetrics.COMPLETE_SCAN_TIME,
+                              'current-scan-percent': ScanMetrics.CURRENT_SCAN_PERCENT}
 
         d['scan_locations'] = self.scan_config.SCAN_LOCATIONS
 
@@ -207,6 +220,9 @@ class Pogom(Flask):
         stats = Pokemon.get_stats()
         count = sum(p['count'] for p in stats)
         return render_template('stats.html', pokemons=Pokemon.get_stats(), total=count)
+
+    def locale(self):
+        return jsonify(get_locale())
 
 
 class CustomJSONEncoder(JSONEncoder):
